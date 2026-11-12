@@ -1,5 +1,29 @@
-const CACHE='adp-fde-mobile-20261107-v02';
+const CACHE='adp-fde-mobile-600-v1';
+const SCOPE=self.registration.scope;
+const HOME=new URL('index.html',SCOPE).href;
 const FILES=['./','./index.html','./icon.svg','./manifest.webmanifest'];
-self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting())));
-self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k.startsWith('adp-fde-mobile-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
-self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||new URL(e.request.url).origin!==self.location.origin)return;e.respondWith(fetch(e.request).then(r=>{if(r.ok){const copy=r.clone();e.waitUntil(caches.open(CACHE).then(c=>c.put(e.request,copy)))}return r}).catch(async()=>await caches.match(e.request)||(e.request.mode==='navigate'?await caches.match('./index.html'):Response.error())))});
+self.addEventListener('install',event=>event.waitUntil(
+ caches.open(CACHE).then(cache=>cache.addAll(FILES.map(p=>new Request(new URL(p,SCOPE),{cache:'reload'}))))
+ .then(()=>self.skipWaiting())
+));
+self.addEventListener('activate',event=>event.waitUntil(
+ caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('adp-fde-mobile-')&&k!==CACHE).map(k=>caches.delete(k))))
+ .then(()=>self.clients.claim())
+));
+self.addEventListener('fetch',event=>{
+ const req=event.request;
+ const root=new URL(SCOPE);
+ const url=new URL(req.url);
+ if(req.method!=='GET'||req.mode!=='navigate'||url.origin!==root.origin||
+  ![root.pathname,new URL(HOME).pathname].includes(url.pathname))return;
+ event.respondWith((async()=>{
+  const cache=await caches.open(CACHE).catch(()=>null);
+  const fallback=async()=>cache?.match(HOME).catch(()=>null);
+  try{
+   const result=await fetch(req);
+   if(result.ok)event.waitUntil(cache?.put(HOME,result.clone()).catch(()=>{})||Promise.resolve());
+   else if(result.status===429||result.status>=500)return (await fallback())||result;
+   return result;
+  }catch{return (await fallback())||Response.error();}
+ })());
+});
